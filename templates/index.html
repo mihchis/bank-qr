@@ -22,18 +22,13 @@
         <div class="form-container">
             <form method="POST" action="/">
                 <div class="form-group">
-                    <label for="bank_search"><i class="fas fa-search"></i> Tìm ngân hàng:</label>
-                    <input type="text" id="bank_search" placeholder="Nhập tên, viết tắt hoặc BIN">
-                </div>
-
-                <div class="form-group">
-                    <label for="bank"><i class="fas fa-university"></i> Chọn ngân hàng:</label>
-                    <select id="bank" name="bank" required>
-                        <option value="">-- Chọn ngân hàng --</option>
-                        {% for bank in banks %}
-                        <option value="{{ bank.shortName }}">{{ bank.name }} ({{ bank.shortName }})</option>
-                        {% endfor %}
-                    </select>
+                    <label for="bank_combo"><i class="fas fa-search"></i> Ngân hàng:</label>
+                    <div class="combo-wrapper">
+                        <input type="text" id="bank_combo" placeholder="Nhập tên, viết tắt, mã hoặc BIN">
+                        <div id="bank_suggestions" class="suggestions"></div>
+                    </div>
+                    <input type="hidden" id="bank_hidden" name="bank">
+                    <small id="bank_selected_hint" class="hint"></small>
                 </div>
                 
                 <div class="form-group">
@@ -113,10 +108,15 @@
             }
         });
 
-        // Tìm kiếm ngân hàng và lọc dropdown
+        // Ô gộp tìm kiếm + dropdown tùy biến -> set giá trị ẩn 'bank'
         const bankData = {{ banks | tojson }};
-        const bankSelect = document.getElementById('bank');
-        const bankSearch = document.getElementById('bank_search');
+        const bankInput = document.getElementById('bank_combo');
+        const bankHidden = document.getElementById('bank_hidden');
+        const bankHint = document.getElementById('bank_selected_hint');
+        const submitBtn = document.querySelector('button[type="submit"]');
+        const suggestionsEl = document.getElementById('bank_suggestions');
+        let currentList = [];
+        let activeIndex = -1;
 
         function normalize(str) {
             return (str || '')
@@ -126,30 +126,124 @@
                 .toLowerCase();
         }
 
-        function renderOptions(list) {
-            bankSelect.innerHTML = '<option value="">-- Chọn ngân hàng --</option>';
-            list.forEach(b => {
-                const opt = document.createElement('option');
-                opt.value = b.shortName;
-                opt.textContent = `${b.name} (${b.shortName})`;
-                bankSelect.appendChild(opt);
-            });
+        function resolveBankShortName(text) {
+            const n = normalize(text);
+            // Nếu nhập theo định dạng "Tên (SHORT)"
+            const matchParen = /\(([^)]+)\)/.exec(text);
+            if (matchParen && matchParen[1]) {
+                return matchParen[1];
+            }
+            for (const b of bankData) {
+                const fields = [b.name, b.shortName, b.code, b.bin].map(normalize);
+                if (fields.some(f => f === n || (n && f.includes(n)))) {
+                    return b.shortName;
+                }
+            }
+            return '';
         }
-        // Khởi tạo danh sách đầy đủ
-        renderOptions(bankData);
 
-        bankSearch.addEventListener('input', (e) => {
+        function updateSelection() {
+            const sn = resolveBankShortName(bankInput.value);
+            if (sn) {
+                bankHidden.value = sn;
+                submitBtn.disabled = false;
+                const b = bankData.find(x => x.shortName.toLowerCase() === sn.toLowerCase());
+                bankHint.textContent = b ? `Đã chọn: ${b.name} (${b.shortName})` : '';
+                bankHint.style.color = '#1976d2';
+            } else {
+                bankHidden.value = '';
+                submitBtn.disabled = true;
+                bankHint.textContent = bankInput.value ? 'Chưa xác định ngân hàng hợp lệ' : '';
+                bankHint.style.color = '#d32f2f';
+            }
+        }
+
+        function renderSuggestions(list) {
+            currentList = list.slice(0, 10);
+            suggestionsEl.innerHTML = '';
+            if (currentList.length === 0) {
+                suggestionsEl.classList.remove('show');
+                return;
+            }
+            currentList.forEach((b, i) => {
+                const item = document.createElement('div');
+                item.className = 'item';
+                item.innerHTML = `
+                    <span class="icon"><i class="fas fa-university"></i></span>
+                    <div class="title">${b.name} <span class="short">(${b.shortName})</span></div>
+                    <div class="meta">BIN ${b.bin}</div>
+                `;
+                item.addEventListener('click', () => selectBank(b));
+                suggestionsEl.appendChild(item);
+            });
+            suggestionsEl.classList.add('show');
+            activeIndex = 0;
+            highlightActive();
+        }
+
+        function highlightActive() {
+            const items = suggestionsEl.querySelectorAll('.item');
+            items.forEach((el, idx) => el.classList.toggle('active', idx === activeIndex));
+            const active = items[activeIndex];
+            if (active) {
+                const top = active.offsetTop - 20;
+                suggestionsEl.scrollTo({ top, behavior: 'smooth' });
+            }
+        }
+
+        function selectBank(b) {
+            bankInput.value = `${b.name} (${b.shortName})`;
+            bankHidden.value = b.shortName;
+            submitBtn.disabled = false;
+            bankHint.textContent = `Đã chọn: ${b.name} (${b.shortName})`;
+            bankHint.style.color = '#1976d2';
+            suggestionsEl.classList.remove('show');
+        }
+
+        bankInput.addEventListener('input', (e) => {
             const q = normalize(e.target.value);
             if (!q) {
-                renderOptions(bankData);
+                suggestionsEl.classList.remove('show');
+                updateSelection();
                 return;
             }
             const filtered = bankData.filter(b => {
                 const fields = [b.name, b.shortName, b.code, b.bin].map(normalize);
                 return fields.some(f => f.includes(q));
             });
-            renderOptions(filtered);
+            renderSuggestions(filtered);
+            updateSelection();
         });
+
+        bankInput.addEventListener('keydown', (e) => {
+            const items = suggestionsEl.querySelectorAll('.item');
+            if (!items.length) return;
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                activeIndex = Math.min(activeIndex + 1, items.length - 1);
+                highlightActive();
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                activeIndex = Math.max(activeIndex - 1, 0);
+                highlightActive();
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                const b = currentList[activeIndex];
+                if (b) selectBank(b);
+            } else if (e.key === 'Escape') {
+                suggestionsEl.classList.remove('show');
+            }
+        });
+
+        document.addEventListener('click', (e) => {
+            const wrapper = document.querySelector('.combo-wrapper');
+            if (wrapper && !wrapper.contains(e.target)) {
+                suggestionsEl.classList.remove('show');
+            }
+        });
+
+        bankInput.addEventListener('change', updateSelection);
+        updateSelection();
     </script>
 </body>
 </html>
