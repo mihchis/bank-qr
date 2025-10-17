@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VietQR - Tạo mã QR chuyển khoản ngân hàng</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1><i class="fas fa-qrcode"></i> VietQR - Tạo mã QR chuyển khoản ngân hàng</h1>
+        </header>
+        
+        {% if error_message %}
+        <div class="error-message">
+            <i class="fas fa-exclamation-circle"></i> {{ error_message }}
+        </div>
+        {% endif %}
+        
+        <div class="form-container">
+            <form method="POST" action="/">
+                <div class="form-group">
+                    <label for="bank_search"><i class="fas fa-search"></i> Tìm ngân hàng:</label>
+                    <input type="text" id="bank_search" placeholder="Nhập tên, viết tắt hoặc BIN">
+                </div>
+
+                <div class="form-group">
+                    <label for="bank"><i class="fas fa-university"></i> Chọn ngân hàng:</label>
+                    <select id="bank" name="bank" required>
+                        <option value="">-- Chọn ngân hàng --</option>
+                        {% for bank in banks %}
+                        <option value="{{ bank.shortName }}">{{ bank.name }} ({{ bank.shortName }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="account_number"><i class="fas fa-credit-card"></i> Số tài khoản:</label>
+                    <input type="text" id="account_number" name="account_number" required placeholder="Nhập số tài khoản">
+                </div>
+                
+                <div class="form-group">
+                    <label for="amount"><i class="fas fa-money-bill-wave"></i> Số tiền (VND):</label>
+                    <input type="text" id="amount" name="amount" required placeholder="Nhập số tiền">
+                </div>
+                
+                <div class="form-group">
+                    <label for="purpose"><i class="fas fa-comment-alt"></i> Nội dung chuyển khoản:</label>
+                    <input type="text" id="purpose" name="purpose" placeholder="Nhập nội dung chuyển khoản">
+                </div>
+                
+                <div class="form-group">
+                    <button type="submit"><i class="fas fa-magic"></i> Tạo mã QR</button>
+                </div>
+            </form>
+        </div>
+        
+        {% if bank_info %}
+        <div class="result-container">
+            <h2><i class="fas fa-info-circle"></i> Thông tin chuyển khoản</h2>
+            <div class="qr-info">
+                <div class="qr-image">
+                    <img src="{{ bank_info.qr_image }}" alt="QR Code">
+                    <div class="qr-overlay">
+                        <span class="qr-hint">Quét mã để thanh toán</span>
+                    </div>
+                </div>
+                <div class="transfer-info">
+                    <p><strong><i class="fas fa-university"></i> Ngân hàng:</strong> {{ bank_info.bank_name }}</p>
+                    <p><strong><i class="fas fa-credit-card"></i> Số tài khoản:</strong> {{ bank_info.account_number }}</p>
+                    <p><strong><i class="fas fa-money-bill-wave"></i> Số tiền:</strong> {{ bank_info.amount }} VND</p>
+                    <p><strong><i class="fas fa-comment-alt"></i> Nội dung:</strong> {{ bank_info.purpose }}</p>
+                </div>
+            </div>
+            <div class="download-section">
+                <a href="{{ bank_info.poster_image }}" download="vietqr_transfer_info.png" class="download-button">
+                    <i class="fas fa-download"></i> Tải ảnh thông tin chuyển khoản
+                </a>
+            </div>
+        </div>
+        {% endif %}
+        
+        <footer>
+            <p>&copy; 2024 VietQR Generator - Tạo mã QR chuyển khoản ngân hàng dễ dàng</p>
+        </footer>
+    </div>
+    
+    <script>
+        // Định dạng số tiền khi nhập
+        document.getElementById('amount').addEventListener('input', function(e) {
+            // Xóa tất cả ký tự không phải số
+            let value = this.value.replace(/\D/g, '');
+            // Định dạng với dấu phân cách hàng nghìn
+            if (value !== '') {
+                value = parseInt(value).toLocaleString('vi-VN');
+            }
+            this.value = value;
+        });
+        
+        // Hiệu ứng khi focus vào form
+        const formGroups = document.querySelectorAll('.form-group');
+        formGroups.forEach(group => {
+            const input = group.querySelector('input, select');
+            if (input) {
+                input.addEventListener('focus', () => {
+                    group.classList.add('focused');
+                });
+                input.addEventListener('blur', () => {
+                    group.classList.remove('focused');
+                });
+            }
+        });
+
+        // Tìm kiếm ngân hàng và lọc dropdown
+        const bankData = {{ banks | tojson }};
+        const bankSelect = document.getElementById('bank');
+        const bankSearch = document.getElementById('bank_search');
+
+        function normalize(str) {
+            return (str || '')
+                .toString()
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .toLowerCase();
+        }
+
+        function renderOptions(list) {
+            bankSelect.innerHTML = '<option value="">-- Chọn ngân hàng --</option>';
+            list.forEach(b => {
+                const opt = document.createElement('option');
+                opt.value = b.shortName;
+                opt.textContent = `${b.name} (${b.shortName})`;
+                bankSelect.appendChild(opt);
+            });
+        }
+        // Khởi tạo danh sách đầy đủ
+        renderOptions(bankData);
+
+        bankSearch.addEventListener('input', (e) => {
+            const q = normalize(e.target.value);
+            if (!q) {
+                renderOptions(bankData);
+                return;
+            }
+            const filtered = bankData.filter(b => {
+                const fields = [b.name, b.shortName, b.code, b.bin].map(normalize);
+                return fields.some(f => f.includes(q));
+            });
+            renderOptions(filtered);
+        });
+    </script>
+</body>
+</html>
